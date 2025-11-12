@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+__author__ = "daeyun"
+
 use_pexpect = True
 if use_pexpect:
     try:
