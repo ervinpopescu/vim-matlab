@@ -1,14 +1,5 @@
 #!/usr/bin/env python
 
-use_pexpect = True
-if use_pexpect:
-    try:
-        import pexpect
-    except ImportError:
-        use_pexpect = False
-if not use_pexpect:
-    from subprocess import PIPE, Popen
-
 import os
 import random
 import signal
@@ -18,6 +9,15 @@ import sys
 import threading
 import time
 from sys import stdin
+
+use_pexpect = True
+if use_pexpect:
+    try:
+        import pexpect
+    except ImportError:
+        use_pexpect = False
+if not use_pexpect:
+    from subprocess import PIPE, Popen
 
 hide_until_newline = False
 auto_restart = True
@@ -29,12 +29,13 @@ class Matlab:
         self.launch_process()
 
     def launch_process(self):
-        self.kill()
+        shell_cmd = "xrdb -load ~/.config/X11/Xresources; env QT_QPA_PLATFORM=xcb LD_PRELOAD=/usr/lib/libstdc++.so:/usr/lib/libfreetype.so LD_LIBRARY_PATH=/usr/lib/dri/ matlab -nodesktop -nosplash -webui"
         if use_pexpect:
-            self.proc = pexpect.spawn("matlab", ["-nosplash", "-nodesktop"])
+            self.proc = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
+            # self.proc = pexpect.spawn()
         else:
             self.proc = Popen(
-                ["matlab", "-nosplash", "-nodesktop"],
+                shell_cmd,
                 stdin=PIPE,
                 close_fds=True,
                 preexec_fn=os.setsid,
@@ -42,13 +43,13 @@ class Matlab:
         return self.proc
 
     def cancel(self):
-        os.kill(self.proc.pid, signal.SIGINT)
+        os.kill(self.proc.pid, signal.SIGINT)  # ty:ignore[invalid-argument-type]
 
     def kill(self):
         try:
-            os.killpg(self.proc.pid, signal.SIGTERM)
-        except:
-            pass
+            os.killpg(self.proc.pid, signal.SIGTERM)  # ty:ignore[invalid-argument-type]
+        except Exception as e:
+            raise Exception("Could not kill process: {}".format(e))
 
     def run_code(self, code, run_timer=True):
         num_retry = 0
@@ -74,10 +75,10 @@ class Matlab:
             try:
                 if use_pexpect:
                     hide_until_newline = True
-                    self.proc.send(command)
+                    self.proc.send(command)  # ty:ignore[possibly-missing-attribute]
                 else:
-                    self.proc.stdin.write(command)
-                    self.proc.stdin.flush()
+                    self.proc.stdin.write(command.encode())  # ty:ignore[possibly-missing-attribute]
+                    self.proc.stdin.flush()  # ty:ignore[possibly-missing-attribute]
                 break
             except Exception as ex:
                 print(ex)
@@ -94,18 +95,18 @@ class TCPHandler(socketserver.StreamRequestHandler):
             msg = self.rfile.readline()
             if not msg:
                 break
-            msg = msg.strip()
+            msg = msg.strip().decode("utf-8")
             print_flush((msg[:74] + "...") if len(msg) > 74 else msg, end="")
 
             options = {
-                "kill": self.server.matlab.kill,
-                "cancel": self.server.matlab.cancel,
+                "kill": self.server.matlab.kill,  # ty:ignore[unresolved-attribute]
+                "cancel": self.server.matlab.cancel,  # ty:ignore[unresolved-attribute]
             }
 
             if msg in options:
                 options[msg]()
             else:
-                self.server.matlab.run_code(msg)
+                self.server.matlab.run_code(msg)  # ty:ignore[unresolved-attribute]
         print_flush("Connection closed: {}".format(self.client_address))
 
 
@@ -136,19 +137,21 @@ def output_filter(output_string):
     :return: The filtered string.
     """
     global hide_until_newline
+    newline = b"\n" if isinstance(output_string, bytes) else "\n"
+    empty = b"" if isinstance(output_string, bytes) else ""
     if hide_until_newline:
-        if "\n" in output_string:
+        if newline in output_string:
             hide_until_newline = False
-            return output_string[output_string.find("\n") :]
+            return output_string[output_string.find(newline) :]
         else:
-            return ""
+            return empty
     else:
         return output_string
 
 
 def input_filter(input_string):
     # Detect C-\
-    if input_string == "\x1c":
+    if input_string in ("\x1c", b"\x1c"):
         print_flush("Terminating")
         global auto_restart
         auto_restart = False
@@ -161,7 +164,7 @@ def forward_input(matlab):
         matlab.proc.interact(input_filter=input_filter, output_filter=output_filter)
     else:
         while True:
-            matlab.proc.stdin.write(stdin.readline())
+            matlab.proc.stdin.write(stdin.readline().encode())
 
 
 def start_thread(target=None, args=()):
@@ -172,6 +175,8 @@ def start_thread(target=None, args=()):
 
 def print_flush(value, end="\n"):
     """Manually flush the line if using pexpect."""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
     if use_pexpect:
         value += "\b" * len(value)
     sys.stdout.write(value + end)
@@ -184,10 +189,10 @@ def main():
 
     global server
     server = socketserver.TCPServer((host, port), TCPHandler)
-    server.matlab = Matlab()
+    server.matlab = Matlab()  # ty:ignore[unresolved-attribute]
 
-    start_thread(target=forward_input, args=(server.matlab,))
-    start_thread(target=status_monitor_thread, args=(server.matlab,))
+    start_thread(target=forward_input, args=(server.matlab,))  # ty:ignore[unresolved-attribute]
+    start_thread(target=status_monitor_thread, args=(server.matlab,))  # ty:ignore[unresolved-attribute]
 
     print_flush("Started server: {}".format((host, port)))
     server.serve_forever()

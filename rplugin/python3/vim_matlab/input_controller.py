@@ -8,10 +8,10 @@ import sh
 from command import Command
 
 
-__author__ = 'daeyun'
+__author__ = "daeyun"
 
 
-class InputController():
+class InputController:
     device_ids = None
     stack = []
     lock = threading.Lock()
@@ -20,17 +20,20 @@ class InputController():
         if InputController.device_ids is None:
             InputController.device_ids = self.find_device_ids()
             if len(InputController.device_ids) < 1:
-                raise RuntimeError('Unable to find input devices.')
+                raise RuntimeError("Unable to find input devices.")
 
     def find_device_ids(self):
         """
         :return: list of all device ids from xinput, excluding XTEST devices.
         """
-        device_info = str(sh.xinput('list', '--short'))
-        id_pattern = r'id=(\d+)'
-        xtest_id_pattern = r'XTEST[^\n]+id=(\d+)'
-        device_ids = list(set(re.findall(id_pattern, device_info)).difference(
-            set(re.findall(xtest_id_pattern, device_info))))
+        device_info = str(sh.xinput("list", "--short"))
+        id_pattern = r"id=(\d+)"
+        xtest_id_pattern = r"XTEST[^\n]+id=(\d+)"
+        device_ids = list(
+            set(re.findall(id_pattern, device_info)).difference(
+                set(re.findall(xtest_id_pattern, device_info))
+            )
+        )
         return device_ids
 
     def disable_input(self):
@@ -38,8 +41,9 @@ class InputController():
             if not InputController.stack:
                 try:
                     for id in self.device_ids:
-                        cmd = ';'.join(['xinput disable {}'.format(id) for id in
-                                        self.device_ids])
+                        cmd = ";".join(
+                            ["xinput disable {}".format(id) for id in self.device_ids]
+                        )
                         Command(cmd).run(1)
                 except:
                     pass
@@ -56,8 +60,9 @@ class InputController():
 
                 if not InputController.stack:
                     try:
-                        cmd = ';'.join(['xinput enable {}'.format(id) for id in
-                                        self.device_ids])
+                        cmd = ";".join(
+                            ["xinput enable {}".format(id) for id in self.device_ids]
+                        )
                         Command(cmd).run(1)
                     except:
                         pass
@@ -74,4 +79,3 @@ def disable_input(func):
         return result
 
     return wraps(func)(wrapper)
-
