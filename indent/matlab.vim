@@ -35,7 +35,7 @@ function! s:IsMatlabContinuationLine(lnum)
       endif
       if has('syntax_items')
 	if synIDattr(synID(prevnonblank(a:lnum), col + 1, 1), "name") =~ "matlabString" ||
-	      \ synIDattr(synID(prevnonblank(a:lnum), col + 1, 1), "name") =~ "matlabComment" 
+	      \ synIDattr(synID(prevnonblank(a:lnum), col + 1, 1), "name") =~ "matlabComment"
 	  let continuationLine = 0
 	endif
       endif
@@ -48,7 +48,7 @@ function GetMatlabIndent()
   " Find a non-blank line above the current line.
   let plnum = prevnonblank(v:lnum - 1)
 
-  " If the previous line is a continuation line, get the beginning of the block to 
+  " If the previous line is a continuation line, get the beginning of the block to
   " use the indent of that line
   if s:IsMatlabContinuationLine(plnum - 1)
     while s:IsMatlabContinuationLine(plnum - 1)
@@ -62,7 +62,7 @@ function GetMatlabIndent()
   endif
 
   let curind = indent(plnum)
-  if s:IsMatlabContinuationLine(v:lnum - 1) 
+  if s:IsMatlabContinuationLine(v:lnum - 1)
     let curind = curind + &sw
   endif
   " Add a 'shiftwidth' after classdef, properties, switch, methods, events,
@@ -86,8 +86,8 @@ function GetMatlabIndent()
       endwhile
       " If it is the main function, determine if function has a matching end
       " or not
-      if pplnum <= 1 
-	" look for a matching end : 
+      if pplnum <= 1
+	" look for a matching end :
 	" - if we find a matching end everything is fine : end of functions
 	"   will be dedented when 'end' is reached
 	" - if not, then all other functions are subfunctions : 'function'
@@ -108,7 +108,7 @@ function GetMatlabIndent()
     endif
     " if the for-end block (or while-end) is on the same line : dedent
     if getline(plnum)  =~ '[,;]\?\s*end'
-      let curind = curind - &sw 
+      let curind = curind - &sw
     endif
   endif
 

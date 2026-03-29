@@ -1,0 +1,10 @@
+[package]
+name = "vim-matlab"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+nix = { version = "0.29", features = ["fs", "process", "signal", "term", "user"] }
+clap = { version = "4", features = ["derive"] }
+libc = "0.2.183"

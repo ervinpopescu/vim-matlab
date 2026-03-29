@@ -1,6 +1,9 @@
 .ropeproject
 *.log
 
+### Rust ###
+/target/
+
 ### Vim ###
 [._]*.s[a-w][a-z]
 [._]s[a-w][a-z]
@@ -107,3 +110,8 @@ Temporary Items
 
 # Simulink Code Generation
 slprj/
+
+
+# Added by cargo
+
+/target

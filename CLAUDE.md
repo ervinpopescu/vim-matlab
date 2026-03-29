@@ -4,39 +4,51 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-vim-matlab is a Neovim remote plugin (rplugin) that provides an alternative to MATLAB's default editor. It remotely controls a CLI MATLAB instance via a TCP socket server, sending code from Neovim buffers to MATLAB for evaluation.
+vim-matlab is a Neovim plugin that controls a CLI MATLAB instance. A Rust binary spawns MATLAB in a PTY and listens on a Unix socket; a Lua plugin sends code from Neovim buffers to MATLAB for evaluation.
 
 ## Commands
 
-- **Run tests**: `PYTHONPATH="rplugin/python3:rplugin/python3/vim_matlab" pytest -s` (from repo root)
-- **Lint/format**: `ruff check` / `ruff format` (ruff is used, see `.ruff_cache/`)
-- **Reload plugin in Neovim**: `scripts/reload-vim.sh [file]`
-- **Run MATLAB server**: `scripts/vim-matlab-server.py`
+- **Build**: `cargo build`
+- **Run tests**: `cargo test`
+- **Run server**: `cargo run -- --matlab-cmd "matlab -nodesktop -nosplash"`
+- **Lint**: `cargo clippy`
+- **Format**: `cargo fmt`
 
 ## Architecture
 
-### Two-process design
+### Two-component design
 
-1. **Server** (`scripts/vim-matlab-server.py`) — standalone Python script that spawns a MATLAB CLI process (via `pexpect` or `subprocess`) and listens on TCP port 43889. Handles MATLAB crash recovery and auto-restart. Runs independently of Neovim.
+1. **Rust binary** (`src/`) — spawns MATLAB in a PTY, listens on a Unix socket (`/tmp/vim-matlab-{uid}.sock`). Accepts newline-delimited messages: `"cancel"` (SIGINT), `"kill"` (SIGTERM), anything else is MATLAB code.
 
-2. **Neovim rplugin** (`rplugin/python3/vim_matlab/`) — registered via `:UpdateRemotePlugins`. Connects to the server over TCP to send code for execution.
+2. **Lua plugin** (`lua/vim-matlab/init.lua`) — registers Neovim commands and keybindings for `.m` files. Parses buffer text (cells, selections, lines), strips MATLAB comments, and sends code over the Unix socket.
 
-### rplugin module layout (`rplugin/python3/vim_matlab/`)
+### Rust modules (`src/`)
 
-- `__init__.py` — `VimMatlab` class decorated with `@neovim.plugin`. Defines all `:Matlab*` commands and autocmds. Entry point for the rplugin.
-- `matlab_cli_controller.py` — `MatlabCliController` manages the TCP socket connection to the server. All code execution goes through `run_code()` which sends semicolon-joined lines over the socket.
-- `python_vim_utils.py` — `PythonVimUtils` static utility class for Neovim buffer manipulation. Contains regex patterns for MATLAB comment stripping, cell detection (`%%`), ellipsis continuation, function block parsing, and variable detection. Module-level `vim` variable is set by `__init__.py`.
-- `io_helper.py` — resolves path to bundled MATLAB helper scripts (`rplugin/python3/vim_matlab/matlab/`).
-- `matlab/` — MATLAB `.m` helper scripts added to MATLAB's path at connection time (e.g., `evalAndClean.m`, `sendTcp.m`, `printVarInfo.m`).
+- `main.rs` — CLI entry (clap), PTY stdout/stdin forwarding, tokio runtime setup
+- `matlab.rs` — MATLAB PTY management: spawn via fork/exec, send code, send signals
+- `server.rs` — tokio Unix socket listener, command dispatch
+- `protocol.rs` — message parsing (code vs cancel/kill)
 
-### Key bindings
+### Lua plugin (`lua/vim-matlab/`)
 
-Defined in `ftplugin/matlab/vim-matlab.vim`, controlled by `g:matlab_auto_mappings` (default: 1). Keybindings only activate for `.m` files via ftplugin.
+- `init.lua` — all plugin logic: socket client, buffer parsing, commands, keybindings, setup()
 
-### Communication protocol
+### Key bindings (for `.m` files, via ftplugin)
 
-Simple line-based TCP protocol on port 43889. Commands are newline-terminated strings. Special messages: `"kill"` (SIGTERM), `"cancel"` (SIGINT). Everything else is treated as MATLAB code. The server wraps code in a `tic`/`toc` timer by default.
+- `<leader><C-m>` — run cell (normal) / run selection (visual)
+- `<leader><C-h>` — run current line
+- `<leader>cc` — cancel (SIGINT)
+- `<leader>cs` — launch server in terminal split
+- `,h` — help for word under cursor
+- `,e` — open file in MATLAB GUI editor
 
-## Python version note
+### Configuration (Lua)
 
-The rplugin directory is `rplugin/python3/` (Python 3). The `run-tests.sh` script still references `rplugin/python` — run pytest directly with the correct PYTHONPATH instead.
+```lua
+require("vim-matlab").setup({
+  socket = "/tmp/vim-matlab-custom.sock",  -- optional
+  auto_mappings = true,                     -- default
+})
+```
+
+Vim globals: `g:matlab_server_split` ("vertical"/"horizontal"), `g:matlab_server_cmd` (binary path override).

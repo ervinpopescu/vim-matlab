@@ -1,26 +1,18 @@
-name: Tests
+name: CI
 
 on:
   push:
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
-
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install dependencies
-        run: pip install pytest pynvim
+      - name: Build
+        run: cargo build --verbose
 
-      - name: Run tests
-        env:
-          PYTHONPATH: rplugin/python3:rplugin/python3/vim_matlab
-        run: python -m pytest -v
+      - name: Test
+        run: cargo test --verbose
