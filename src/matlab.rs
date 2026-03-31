@@ -119,7 +119,11 @@ impl Matlab {
     pub fn send_code(&self, code: &str) -> io::Result<()> {
         let mut buf = code.to_owned();
         buf.push('\n');
-        write(&self.master, buf.as_bytes()).map_err(nix_to_io)?;
+        let mut remaining = buf.as_bytes();
+        while !remaining.is_empty() {
+            let n = write(&self.master, remaining).map_err(nix_to_io)?;
+            remaining = &remaining[n..];
+        }
         Ok(())
     }
 

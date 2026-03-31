@@ -40,10 +40,7 @@ fn raw_write_all(fd: i32, mut buf: &[u8]) -> io::Result<()> {
 #[command(version, about)]
 struct Args {
     /// Command used to launch MATLAB.
-    #[arg(
-        long,
-        default_value = "setsid xwayland-satellite :1 >/dev/null 2>&1 & for i in {1..50}; do xset -display :1 q >/dev/null 2>&1 && break || sleep 0.1; done; export DISPLAY=:1; xrdb -load ~/.config/X11/Xresources; QT_QPA_PLATFORM=xcb LD_PRELOAD=/usr/lib/libstdc++.so:/usr/lib/libfreetype.so LD_LIBRARY_PATH=/usr/lib/dri/ matlab -nodesktop -nosplash -webui"
-    )]
+    #[arg(long, default_value = "matlab -nodesktop -nosplash")]
     matlab_cmd: String,
 
     /// Path to the Unix domain socket.
@@ -181,6 +178,9 @@ fn main() -> io::Result<()> {
     if let Some(ref orig) = orig_termios {
         termios::tcsetattr(&stdin_handle, termios::SetArg::TCSANOW, orig).ok();
     }
+
+    // Remove the socket file on all exit paths.
+    let _ = std::fs::remove_file(&args.socket);
 
     std::process::exit(0);
 }
