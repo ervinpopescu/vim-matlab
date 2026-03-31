@@ -1,149 +1,115 @@
-vim-matlab
-===========
+# vim-matlab
 
-An alternative to Matlab's default editor for Vim users.
+A Neovim plugin for controlling a CLI MATLAB (or Octave) instance. A Rust binary spawns MATLAB in a PTY and listens on a Unix socket; the Lua plugin sends code from Neovim buffers to MATLAB for evaluation.
 
-## FAQ
+## Requirements
 
-#### How do I run code cells (`%%` blocks)?
-
-In Normal mode, press `<Enter>` or `<C-m>`. The editor will parse the code in the current cell and send to MATLAB for evaluation.
-
-#### What if I need MATLAB's GUI features?
-
-Most MATLAB windows can be launched through commands; even in `-nodisplay` mode. For example, [workspace](https://www.mathworks.com/help/matlab/ref/workspace.html) command opens the Workspace browser.
-
-<img width="400" alt="screenshot 2016-08-18 20 57 56" src="https://cloud.githubusercontent.com/assets/1250682/17795452/82df34fe-6586-11e6-8049-6fc6712c9b0e.png">
-
-If you need to access the debugger, use [edit](https://www.mathworks.com/help/matlab/ref/edit.html) to open the default GUI editor.
-
-#### Error: `E492: Not an editor command`
-
-If this the first time you're installing a Python plugin written for Neovim, you should install [python-client](https://github.com/neovim/python-client) and run `:UpdateRemotePlugins`.
-
-The recommended way to install this plugin is to use the plugin manager [vim-plug](https://github.com/junegunn/vim-plug) and add this to your `.vimrc` or `init.vim`:
-
-```vim
-function! DoRemote(arg)
-  UpdateRemotePlugins
-endfunction
-
-Plug 'daeyun/vim-matlab', { 'do': function('DoRemote') }
-```
-
-
-
-## Usage
-
-`vim-matlab` works by remotely controlling a CLI Matlab instance (launched by `vim-matlab-server.py`).
-
-Run
-
-```
-./scripts/vim-matlab-server.py
-```
-
-This will start a Matlab REPL and redirect commands received from Vim to Matlab. When Matlab crashes (e.g. segfault during MEX development), it will launch another process.
-
-Then open Vim in another terminal and start editing .m files.
-
-Alternatively, launch a server instance from Vim using `:MatlabLaunchServer`. The server will be launched either in a Neovim terminal buffer or a tmux split (see [g:matlab_server_launcher](#configuration)).
-
-- `:MatlabCliCancel` (\<leader\>c) tells the server to send SIGINT to Matlab, canceling current operation.
-
-- `:MatlabCliRunSelection` executes the highlighted Matlab code.
-
-- `:MatlabCliRunCell` executes code in the current cell — i.e. `%%` blocks. Similar to Ctrl-Enter in the Matlab editor.
-
-- `:MatlabCliOpenInEditor` (,e) opens current buffer in a Matlab editor window. e.g. to access the debugger.
-
-- `:MatlabCliHelp` (,h) prints help message for the word under the cursor.
-
-- `:MatlabNormalModeCreateCell` (C-l) inserts a cell marker above the current line.
-
-- `:MatlabVisualModeCreateCell` (C-l) inserts cell markers above and below the visual selection.
-
-- `:MatlabInsertModeCreateCell` (C-l) inserts a cell marker at the beginning of the current line.
-
-- `:MatlabLaunchServer` launches a server instance in a Vim or tmux split.
-
-See [this file](rplugin/python/vim_matlab/__init__.py) for a list of available commands, and [vim-matlab.vim](ftplugin/matlab/vim-matlab.vim) for default key bindings.
-
-![Screenshot](/docs/images/screenshot.png)
-
-
+- Neovim 0.9+
+- Rust 1.85+ (to build the server binary)
+- MATLAB R2020a+ or GNU Octave
 
 ## Installation
 
-1. Install the python3 client for Neovim:
+### 1. Build the server binary
 
-```
-pip3 install neovim
-```
+Clone and build:
 
-2. Add to `.vimrc` (or `~/.config/nvim/init.vim`). e.g. using [vim-plug](https://github.com/junegunn/vim-plug):
-
-```
-Plug 'daeyun/vim-matlab'
-```
-
-3. Register the plugin inside Neovim:
-
-```
-:UpdateRemotePlugins
+```sh
+git clone https://github.com/ervinpopescu/vim-matlab
+cd vim-matlab
+cargo build --release
+cp target/release/vim-matlab ~/.local/bin/
 ```
 
-### Optional steps (recommended)
+Or install directly with cargo:
 
-4. Install a snippet engine such as [SirVer/ultisnips](https://github.com/SirVer/ultisnips) or [vim-snipmate](https://github.com/garbas/vim-snipmate) to use the [included snippets](https://github.com/daeyun/vim-matlab/blob/master/snippets/matlab.snippets). We also recommend installing [vim-snippets](https://github.com/honza/vim-snippets). We welcome any contributions to extend the `matlab.snippets` file.
-
-5. Install pexpect for improved interactivity with the MATLAB console (e.g. tab completion):
-
-```
-pip3 install pexpect
+```sh
+cargo install --git https://github.com/ervinpopescu/vim-matlab
 ```
 
+### 2. Install the Neovim plugin
+
+Using [lazy.nvim](https://github.com/folke/lazy.nvim):
+
+```lua
+{
+  "ervinpopescu/vim-matlab",
+  ft = { "matlab", "octave" },
+  config = function()
+    require("vim-matlab").setup()
+  end,
+}
+```
+
+## Usage
+
+Open a `.m` file, launch the server with `<leader>cs`, and use the keybindings below.
+
+### Keybindings (`.m` and `.octave` files)
+
+| Keybinding | Mode | Description |
+|---|---|---|
+| `<leader><C-m>` | Normal | Run current `%%` cell |
+| `<leader><C-m>` | Visual | Run selection |
+| `<leader><C-h>` | Normal | Run current line |
+| `<leader>cc` | Normal | Cancel (SIGINT) |
+| `<leader>cs` | Normal | Launch server in terminal split |
+| `,h` | Normal | Help for word under cursor |
+| `,e` | Normal | Open file in MATLAB GUI editor |
+
+### Commands
+
+`:MatlabRunCell`, `:MatlabRunSelection`, `:MatlabRunLine`, `:MatlabCancel`, `:MatlabLaunchServer`, `:MatlabHelp`, `:MatlabOpenInEditor`
+
+### Starting the server manually
+
+```sh
+vim-matlab --matlab-cmd "matlab -nodesktop -nosplash"
+```
+
+The server listens on `/tmp/vim-matlab-<uid>.sock` by default.
 
 ## Configuration
 
-Use `g:matlab_auto_mappings` to control whether the plugin automatically generates key mappings (default = 1).
-
-```vim
-let g:matlab_auto_mappings = 0 "automatic mappings disabled
-let g:matlab_auto_mappings = 1 "automatic mappings enabled
+```lua
+require("vim-matlab").setup({
+  -- Custom MATLAB launch command (default: nil, uses "matlab -nodesktop -nosplash")
+  matlab_cmd = "matlab -nodesktop -nosplash",
+  -- Custom server binary (default: "vim-matlab")
+  server_cmd = "/path/to/vim-matlab",
+  -- Custom socket path (default: /tmp/vim-matlab-<uid>.sock)
+  socket = "/tmp/vim-matlab-custom.sock",
+  -- Where to launch the server: "vim" (default) or "tmux"
+  launcher = "vim",
+  -- Split direction: "vertical" (default) or "horizontal"
+  split = "vertical",
+  -- Disable automatic keybindings (default: true)
+  auto_mappings = true,
+})
 ```
 
-Use `g:matlab_server_launcher` to control whether `:MatlabLaunchServer` uses a Vim or tmux split (default = `'vim'`).
+Vim globals (alternative to setup opts):
+- `g:matlab_server_launcher` — `"vim"` (default) or `"tmux"`
+- `g:matlab_server_split` — `"vertical"` (default) or `"horizontal"`
+- `g:matlab_server_cmd` — override the server binary path
 
-```vim
-let g:matlab_server_launcher = 'vim'  "launch the server in a Neovim terminal buffer
-let g:matlab_server_launcher = 'tmux' "launch the server in a tmux split
-```
+## How it works
 
-Use `g:matlab_server_split` to control whether `:MatlabLaunchServer` uses a vertical or horizontal split (default = `'vertical'`).
+1. **Rust server** (`vim-matlab` binary): spawns MATLAB in a PTY, forwarding I/O to the terminal. Listens on a Unix socket for newline-delimited commands from Neovim.
 
-```vim
-let g:matlab_server_split = 'vertical'   "launch the server in a vertical split
-let g:matlab_server_split = 'horizontal' "launch the server in a horizontal split
-```
+2. **Lua plugin**: parses the current buffer (cell detection, comment stripping, ellipsis continuation joining) and sends code over the socket.
 
+### Socket protocol
+
+- `cancel` — send SIGINT to MATLAB
+- `kill` — send SIGTERM and shut down the server
+- anything else — sent to MATLAB as code
 
 ## Development
 
-Set up a symlink so that the plugin directory points to your repository.
-
+```sh
+cargo build    # build
+cargo test     # run tests
+cargo clippy   # lint
+cargo fmt      # format
 ```
-git clone git@github.com:daeyun/vim-matlab.git
-rm -r ~/.vim/plugged/vim-matlab
-ln -nsf $(pwd)/vim-matlab ~/.vim/plugged/
-```
-
-After changing the code, run `scripts/reload-vim.sh` (optionally pass in a file to open) to reload.
-
-For testing, install [pytest](https://github.com/pytest-dev/pytest/) and run `scripts/run-tests.sh`.
-
-
-## Recommended Plugins
-
-- [MatlabFilesEdition](http://www.vim.org/scripts/script.php?script_id=2407)
-- [matchit.zip](http://www.vim.org/scripts/script.php?script_id=39)

@@ -52,7 +52,7 @@ pub async fn run(socket_path: &str, matlab: &Matlab) -> io::Result<()> {
                 }
                 Command::RunCode(code) => {
                     let preview = if code.len() > 80 {
-                        format!("{}...", &code[..80])
+                        format!("{}...", code.chars().take(80).collect::<String>())
                     } else {
                         code.clone()
                     };

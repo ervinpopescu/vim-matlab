@@ -6,8 +6,7 @@ local default_socket = "/tmp/vim-matlab-" .. uid .. ".sock"
 
 local socket_path = default_socket
 local server_cmd = "vim-matlab"
-local matlab_cmd =
-  "setsid xwayland-satellite :1 >/dev/null 2>&1 & for i in {1..50}; do xset -display :1 q >/dev/null 2>&1 && break || sleep 0.1; done; export DISPLAY=:1; xrdb -load ~/.config/X11/Xresources; QT_QPA_PLATFORM=xcb LD_PRELOAD=/usr/lib/libstdc++.so:/usr/lib/libfreetype.so LD_LIBRARY_PATH=/usr/lib/dri/ matlab -nodesktop -nosplash -webui"
+local matlab_cmd = nil
 
 --- Strip MATLAB comment from a line (everything after unquoted %).
 --- Single-quoted strings are skipped.
@@ -186,23 +185,30 @@ end
 
 function M.launch_server()
   local split = vim.g.matlab_server_split or "vertical"
+  local launcher = vim.g.matlab_server_launcher or "vim"
   local cmd = vim.g.matlab_server_cmd or server_cmd
-  -- Only append --matlab-cmd if it was explicitly set via setup() or global.
-  -- If it's the default, we let the Rust binary use its own built-in default.
   if matlab_cmd and matlab_cmd ~= "" then
-    -- Simple check to avoid double-appending if the user already put it in matlab_server_cmd
     if not cmd:find("--matlab-cmd") then
       cmd = cmd .. " --matlab-cmd " .. vim.fn.shellescape(matlab_cmd)
     end
   end
-  local prefix = split == "horizontal" and "split" or "vsplit"
-  vim.cmd(prefix .. " | terminal " .. cmd)
+  if launcher == "tmux" then
+    local flag = split == "horizontal" and "-v" or "-h"
+    vim.fn.system("tmux split-window " .. flag .. " " .. vim.fn.shellescape(cmd))
+  else
+    local prefix = split == "horizontal" and "split" or "vsplit"
+    vim.cmd(prefix .. " | terminal " .. cmd)
+  end
 end
 
 --- Apply buffer-local mappings and commands to the current buffer.
 ---@param bufnr? number
 function M.attach(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
+  if vim.b[bufnr].vim_matlab_attached then
+    return
+  end
+  vim.b[bufnr].vim_matlab_attached = true
   local bopts = { buffer = bufnr, silent = true }
 
   -- Mappings
@@ -221,6 +227,7 @@ function M.attach(bufnr)
 
   -- Commands
   vim.api.nvim_buf_create_user_command(bufnr, "MatlabRunCell", M.run_cell, {})
+  vim.api.nvim_buf_create_user_command(bufnr, "MatlabRunSelection", M.run_selection, {})
   vim.api.nvim_buf_create_user_command(bufnr, "MatlabRunLine", M.run_line, {})
   vim.api.nvim_buf_create_user_command(bufnr, "MatlabCancel", M.cancel, {})
   vim.api.nvim_buf_create_user_command(bufnr, "MatlabHelp", M.help, {})
@@ -228,7 +235,7 @@ function M.attach(bufnr)
   vim.api.nvim_buf_create_user_command(bufnr, "MatlabLaunchServer", M.launch_server, {})
 end
 
----@param opts? { socket?: string, auto_mappings?: boolean, server_cmd?: string, matlab_cmd?: string }
+---@param opts? { socket?: string, auto_mappings?: boolean, server_cmd?: string, matlab_cmd?: string, launcher?: string, split?: string }
 function M.setup(opts)
   opts = opts or {}
   if opts.socket then
@@ -237,11 +244,14 @@ function M.setup(opts)
   if opts.server_cmd then
     server_cmd = opts.server_cmd
   end
-  -- We now allow matlab_cmd to be nil/false to use the Rust server's internal default
   if opts.matlab_cmd ~= nil then
     matlab_cmd = opts.matlab_cmd
-  else
-    matlab_cmd = nil
+  end
+  if opts.launcher then
+    vim.g.matlab_server_launcher = opts.launcher
+  end
+  if opts.split then
+    vim.g.matlab_server_split = opts.split
   end
 
   if opts.auto_mappings ~= false then
