@@ -212,18 +212,48 @@ function M.attach(bufnr)
   local bopts = { buffer = bufnr, silent = true }
 
   -- Mappings
-  vim.keymap.set("n", "<leader><C-m>", M.run_cell, bopts)
+  vim.keymap.set(
+    "n",
+    "<leader><C-m>",
+    M.run_cell,
+    vim.tbl_extend("force", bopts, { desc = "MATLAB: run cell" })
+  )
   vim.keymap.set(
     "v",
     "<leader><C-m>",
     "<ESC><cmd>lua require('vim-matlab').run_selection()<CR>",
-    bopts
+    vim.tbl_extend("force", bopts, { desc = "MATLAB: run selection" })
   )
-  vim.keymap.set("n", "<leader><C-h>", M.run_line, bopts)
-  vim.keymap.set("n", "<leader>cc", M.cancel, bopts)
-  vim.keymap.set("n", ",h", M.help, bopts)
-  vim.keymap.set("n", ",e", M.open_in_editor, bopts)
-  vim.keymap.set("n", "<leader>cs", M.launch_server, bopts)
+  vim.keymap.set(
+    "n",
+    "<leader><C-h>",
+    M.run_line,
+    vim.tbl_extend("force", bopts, { desc = "MATLAB: run line" })
+  )
+  vim.keymap.set(
+    "n",
+    "<leader>cc",
+    M.cancel,
+    vim.tbl_extend("force", bopts, { desc = "MATLAB: cancel (SIGINT)" })
+  )
+  vim.keymap.set(
+    "n",
+    ",h",
+    M.help,
+    vim.tbl_extend("force", bopts, { desc = "MATLAB: help for word" })
+  )
+  vim.keymap.set(
+    "n",
+    ",e",
+    M.open_in_editor,
+    vim.tbl_extend("force", bopts, { desc = "MATLAB: open in editor" })
+  )
+  vim.keymap.set(
+    "n",
+    "<leader>cs",
+    M.launch_server,
+    vim.tbl_extend("force", bopts, { desc = "MATLAB: launch server" })
+  )
 
   -- Commands
   vim.api.nvim_buf_create_user_command(bufnr, "MatlabRunCell", M.run_cell, {})
