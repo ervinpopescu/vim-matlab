@@ -21,6 +21,7 @@ pub trait MatlabActions {
 }
 
 /// Handle to a MATLAB process running inside a PTY.
+#[derive(Debug)]
 pub struct Matlab {
     master: OwnedFd,
     child_pid: Pid,
@@ -186,6 +187,96 @@ impl Matlab {
 mod tests {
     use super::*;
     use std::io::Read;
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    /// Read all available bytes from a non-blocking fd, retrying on EAGAIN.
+    fn drain_nonblocking(fd: i32) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        for _ in 0..40 {
+            let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+            if n > 0 {
+                out.extend_from_slice(&buf[..n as usize]);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        out
+    }
+
+    // ── spawn error paths ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_spawn_rejects_null_byte() {
+        // CString::new fails before fork() is ever called.
+        let err = Matlab::spawn("echo\0hello").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    // ── fd validity and flags ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_master_fd_is_valid() {
+        let matlab = Matlab::spawn("cat").unwrap();
+        // A valid fd can be dup'd; dup returns -1 on invalid fd.
+        let dup_fd = unsafe { libc::dup(matlab.master_fd().as_raw_fd()) };
+        assert!(dup_fd >= 0, "master fd should be valid");
+        unsafe { libc::close(dup_fd) };
+    }
+
+    #[test]
+    fn test_master_fd_is_nonblocking() {
+        let matlab = Matlab::spawn("cat").unwrap();
+        let flags = nix::fcntl::fcntl(matlab.master_fd(), nix::fcntl::FcntlArg::F_GETFL).unwrap();
+        let oflags = nix::fcntl::OFlag::from_bits_truncate(flags);
+        assert!(
+            oflags.contains(nix::fcntl::OFlag::O_NONBLOCK),
+            "master fd must have O_NONBLOCK set for AsyncFd"
+        );
+    }
+
+    #[test]
+    fn test_pty_window_size() {
+        let matlab = Matlab::spawn("cat").unwrap();
+        let mut ws = libc::winsize {
+            ws_row: 0,
+            ws_col: 0,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let ret = unsafe { libc::ioctl(matlab.master_fd().as_raw_fd(), libc::TIOCGWINSZ, &mut ws) };
+        assert_eq!(ret, 0, "TIOCGWINSZ should succeed");
+        assert_eq!(ws.ws_row, 24);
+        assert_eq!(ws.ws_col, 80);
+    }
+
+    #[test]
+    fn test_child_pid_is_positive() {
+        let matlab = Matlab::spawn("cat").unwrap();
+        assert!(matlab.child_pid().as_raw() > 0);
+    }
+
+    // ── send_code ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_send_code_empty_string() {
+        // Empty string sends only "\n"; should not error or hang.
+        let matlab = Matlab::spawn("cat").unwrap();
+        matlab.send_code("").unwrap();
+        let bytes = drain_nonblocking(matlab.master_fd().as_raw_fd());
+        assert!(bytes.contains(&b'\n'));
+    }
+
+    #[test]
+    fn test_send_code_unicode() {
+        // Multi-byte UTF-8 must be written completely without slicing mid-char.
+        let matlab = Matlab::spawn("cat").unwrap();
+        matlab.send_code("café").unwrap();
+        let bytes = drain_nonblocking(matlab.master_fd().as_raw_fd());
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(s.contains("caf\u{e9}") || s.contains("café"));
+    }
 
     #[test]
     fn test_nix_to_io() {
