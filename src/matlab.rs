@@ -11,7 +11,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use nix::libc;
 use nix::pty::{Winsize, openpty};
 use nix::sys::signal::{self, Signal};
-use nix::unistd::{ForkResult, Pid, close, dup2, execvp, fork, setsid, write};
+use nix::unistd::{ForkResult, Pid, execvp, fork, setsid, write};
 
 /// Handle to a MATLAB process running inside a PTY.
 pub struct Matlab {
@@ -67,22 +67,29 @@ impl Matlab {
             ForkResult::Child => {
                 // --- child process ---
                 // Close the master side; the child only needs the slave.
-                let _ = close(pty.master.as_raw_fd());
+                // SAFETY: Raw syscalls in the child after fork are safe as they are
+                // async-signal-safe and we are about to call exec.
+                unsafe { libc::close(pty.master.as_raw_fd()) };
 
                 // Create a new session so the slave PTY becomes the
                 // controlling terminal.
                 let _ = setsid();
 
                 // Set the slave PTY as the controlling terminal.
+                // SAFETY: TIOCSCTTY is a standard ioctl to set the controlling terminal.
                 unsafe { libc::ioctl(pty.slave.as_raw_fd(), libc::TIOCSCTTY, 0) };
 
                 // Redirect stdin/stdout/stderr to the slave PTY.
                 let slave_fd = pty.slave.as_raw_fd();
-                let _ = dup2(slave_fd, libc::STDIN_FILENO);
-                let _ = dup2(slave_fd, libc::STDOUT_FILENO);
-                let _ = dup2(slave_fd, libc::STDERR_FILENO);
-                if slave_fd > libc::STDERR_FILENO {
-                    let _ = close(slave_fd);
+                // SAFETY: These libc calls are safe in the child after fork. Using direct libc
+                // avoids Rust's RAII/Drop semantics which might be unsafe in a forked child.
+                unsafe {
+                    libc::dup2(slave_fd, libc::STDIN_FILENO);
+                    libc::dup2(slave_fd, libc::STDOUT_FILENO);
+                    libc::dup2(slave_fd, libc::STDERR_FILENO);
+                    if slave_fd > libc::STDERR_FILENO {
+                        libc::close(slave_fd);
+                    }
                 }
 
                 // Replace the process image with bash running the command.
