@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.85.1"
 
 [dependencies]
+async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 nix = { version = "0.31", features = ["fs", "process", "signal", "term", "user"] }
 clap = { version = "4", features = ["derive"] }
