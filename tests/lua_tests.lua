@@ -13,8 +13,14 @@ _G.vim = {
   end,
   schedule = function() end,
   notify = function() end,
-  tbl_extend = function(...)
-    return {}
+  tbl_extend = function(_, ...)
+    local result = {}
+    for _, t in ipairs({ ... }) do
+      for k, v in pairs(t) do
+        result[k] = v
+      end
+    end
+    return result
   end,
   bo = { filetype = "" },
   b = setmetatable({}, {
