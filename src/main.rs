@@ -286,6 +286,13 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn unique_socket_path() -> String {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("/tmp/vim-matlab-test-{}-{}.sock", std::process::id(), n)
+    }
 
     #[test]
     fn test_raw_read_success() {
@@ -516,7 +523,7 @@ mod tests {
         // Spawn `cat` as a stand-in for MATLAB.
         let matlab = matlab::Matlab::spawn("cat").expect("failed to spawn cat");
         let master_raw_fd = matlab.master_fd().as_raw_fd();
-        let socket_path = format!("/tmp/vim-matlab-test-runner-{}.sock", std::process::id());
+        let socket_path = unique_socket_path();
         let args = Args {
             matlab_cmd: "cat".to_string(),
             socket: socket_path.clone(),
