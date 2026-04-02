@@ -358,7 +358,7 @@ mod tests {
     async fn test_forward_pty_to_stdout_io_error() {
         let (_s1, _s2) = std::os::unix::net::UnixStream::pair().unwrap();
         // Use an invalid FD to trigger an error
-        let (tx, _rx) = tokio::sync::oneshot::channel::<()>();
+        let (_tx, _rx) = tokio::sync::oneshot::channel::<()>();
 
         // This is hard to trigger a real error with AsyncFd without closing it,
         // but we can at least hit the branch with a mock if needed.
