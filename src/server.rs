@@ -64,7 +64,7 @@ async fn handle_client(
             }
             Command::RunCode(code) => {
                 let preview = if code.len() > 80 {
-                    format!("{}...", &code[..80])
+                    format!("{}...", code.chars().take(80).collect::<String>())
                 } else {
                     code.clone()
                 };
