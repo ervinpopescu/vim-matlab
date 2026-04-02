@@ -28,16 +28,20 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
+      - name: Install llvm-tools
+        run: rustup component add llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
       - name: Generate coverage report
-        run: |
-          cargo install cargo-tarpaulin
-          cargo tarpaulin --out xml
+        run: cargo llvm-cov --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./cobertura.xml
+          files: ./lcov.info
           fail_ci_if_error: true
 
   lua:
