@@ -113,3 +113,10 @@ cargo test     # run tests
 cargo clippy   # lint
 cargo fmt      # format
 ```
+
+## Credits
+
+This plugin is a Rust/Lua rewrite of the original
+[vim-matlab](https://github.com/daeyunshin/vim-matlab) by
+[Daeyun Shin](https://github.com/daeyunshin), which provided the core ideas
+for PTY-based MATLAB interaction and Vim integration.
