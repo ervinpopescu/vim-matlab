@@ -4,9 +4,10 @@
 //! Neovim (or any client) and dispatches them to the MATLAB PTY.
 
 use std::io;
+use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::net::UnixListener;
+use tokio::net::{UnixListener, UnixStream};
 
 use crate::matlab::MatlabActions;
 use crate::protocol::{self, Command};
@@ -17,26 +18,60 @@ macro_rules! log_raw {
     };
 }
 
+/// Interface for a stream listener.
+#[async_trait::async_trait]
+pub trait Listener {
+    async fn accept(&self) -> io::Result<(UnixStream, ())>;
+}
+
+#[async_trait::async_trait]
+impl Listener for UnixListener {
+    async fn accept(&self) -> io::Result<(UnixStream, ())> {
+        self.accept().await.map(|(s, _a)| (s, ()))
+    }
+}
+
 /// Run the Unix socket server, accepting connections and dispatching
 /// commands to `matlab` until a `kill` command is received.
 ///
 /// Any stale socket file at `socket_path` is removed before binding.
-pub async fn run(socket_path: &str, matlab: &impl MatlabActions) -> io::Result<()> {
+pub async fn run(
+    socket_path: String,
+    matlab: Arc<impl MatlabActions>,
+    shutdown: tokio::sync::oneshot::Receiver<()>,
+) -> io::Result<()> {
     // Remove a leftover socket file from a previous run.
-    if std::path::Path::new(socket_path).exists() {
-        std::fs::remove_file(socket_path)?;
+    if std::path::Path::new(&socket_path).exists() {
+        std::fs::remove_file(&socket_path)?;
     }
 
-    let listener = UnixListener::bind(socket_path)?;
+    let listener = UnixListener::bind(&socket_path)?;
     log_raw!("[server] listening on {socket_path}");
+    run_with_listener(listener, matlab, socket_path, shutdown).await
+}
 
+/// Run the server with a provided listener.
+pub async fn run_with_listener(
+    listener: impl Listener,
+    matlab: Arc<impl MatlabActions>,
+    socket_path: String,
+    mut shutdown: tokio::sync::oneshot::Receiver<()>,
+) -> io::Result<()> {
     loop {
-        let (stream, _addr) = listener.accept().await?;
-        log_raw!("[server] client connected");
-        if handle_client(stream, matlab, socket_path).await? {
-            return Ok(());
+        tokio::select! {
+            result = listener.accept() => {
+                let (stream, _addr) = result?;
+                log_raw!("[server] client connected");
+                if handle_client(stream, &*matlab, &socket_path).await? {
+                    return Ok(());
+                }
+                log_raw!("[server] client disconnected");
+            }
+            _ = &mut shutdown => {
+                log_raw!("[server] shutdown signal received");
+                return Ok(());
+            }
         }
-        log_raw!("[server] client disconnected");
     }
 }
 
@@ -124,6 +159,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_handle_client_long_code() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let mock = MockMatlab {
+            codes: Arc::new(Mutex::new(vec![])),
+            sigints: Arc::new(Mutex::new(0)),
+            sigterms: Arc::new(Mutex::new(0)),
+        };
+
+        use tokio::io::AsyncWriteExt;
+        let long_code = "a".repeat(100);
+        client
+            .write_all(format!("{}\n", long_code).as_bytes())
+            .await
+            .unwrap();
+        drop(client);
+
+        handle_client(server, &mock, "/tmp/test.sock")
+            .await
+            .unwrap();
+        assert_eq!(mock.codes.lock().unwrap()[0], long_code);
+    }
+
+    #[tokio::test]
     async fn test_handle_client_cancel() {
         let (mut client, server) = UnixStream::pair().unwrap();
         let mock = MockMatlab {
@@ -163,5 +221,143 @@ mod tests {
         assert!(result);
         assert_eq!(*mock.sigterms.lock().unwrap(), 1);
         assert!(!std::path::Path::new(socket_path).exists());
+    }
+
+    #[tokio::test]
+    async fn test_handle_client_send_error() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        struct ErrorMatlab;
+        impl MatlabActions for ErrorMatlab {
+            fn send_code(&self, _code: &str) -> io::Result<()> {
+                Err(io::Error::new(io::ErrorKind::Other, "send error"))
+            }
+            fn send_sigint(&self) {}
+            fn send_sigterm(&self) {}
+        }
+
+        use tokio::io::AsyncWriteExt;
+        client.write_all(b"x = 1\n").await.unwrap();
+        drop(client);
+
+        // Should not return error, just log it
+        let result = handle_client(server, &ErrorMatlab, "/tmp/test.sock").await;
+        assert!(result.is_ok());
+    }
+
+    struct MockListener {
+        stream: Mutex<Option<UnixStream>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Listener for MockListener {
+        async fn accept(&self) -> io::Result<(UnixStream, ())> {
+            let mut s = self.stream.lock().unwrap();
+            if let Some(stream) = s.take() {
+                Ok((stream, ()))
+            } else {
+                // Simulate listener closing/error to break loop
+                Err(io::Error::new(io::ErrorKind::Other, "done"))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_run_with_listener_kill() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let mock_matlab = Arc::new(MockMatlab {
+            codes: Arc::new(Mutex::new(vec![])),
+            sigints: Arc::new(Mutex::new(0)),
+            sigterms: Arc::new(Mutex::new(0)),
+        });
+
+        let socket_path = "/tmp/vim-matlab-test-run.sock";
+        let _ = std::fs::File::create(socket_path);
+
+        let listener = MockListener {
+            stream: Mutex::new(Some(server)),
+        };
+
+        use tokio::io::AsyncWriteExt;
+        client.write_all(b"kill\n").await.unwrap();
+        drop(client);
+
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let _ = run_with_listener(listener, mock_matlab.clone(), socket_path.to_string(), rx).await;
+        assert_eq!(*mock_matlab.sigterms.lock().unwrap(), 1);
+        assert!(!std::path::Path::new(socket_path).exists());
+    }
+
+    #[tokio::test]
+    async fn test_run_direct_socket() {
+        let socket_path = format!("/tmp/vim-matlab-test-direct-{}.sock", std::process::id());
+        let _ = std::fs::remove_file(&socket_path);
+
+        let mock_matlab = Arc::new(MockMatlab {
+            codes: Arc::new(Mutex::new(vec![])),
+            sigints: Arc::new(Mutex::new(0)),
+            sigterms: Arc::new(Mutex::new(0)),
+        });
+
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let path_clone = socket_path.clone();
+        let matlab_clone = Arc::clone(&mock_matlab);
+        let server_task = tokio::spawn(async move { run(path_clone, matlab_clone, rx).await });
+
+        // Give the listener a moment to bind.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let mut client = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
+        use tokio::io::AsyncWriteExt;
+        let _ = std::fs::File::create(&socket_path); // ensure file exists for kill cleanup
+        client.write_all(b"kill\n").await.unwrap();
+        drop(client);
+
+        server_task.await.unwrap().unwrap();
+        assert_eq!(*mock_matlab.sigterms.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_listener_client_disconnect() {
+        // Client connects but sends nothing — tests the "disconnected" log path.
+        let (client, server) = UnixStream::pair().unwrap();
+        drop(client); // immediate disconnect
+
+        let mock_matlab = Arc::new(MockMatlab {
+            codes: Arc::new(Mutex::new(vec![])),
+            sigints: Arc::new(Mutex::new(0)),
+            sigterms: Arc::new(Mutex::new(0)),
+        });
+
+        let listener = MockListener {
+            stream: Mutex::new(Some(server)),
+        };
+
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        // MockListener errors on the second accept, which propagates through result?
+        let result =
+            run_with_listener(listener, mock_matlab, "/tmp/test.sock".to_string(), rx).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_with_listener_shutdown() {
+        let (_client, server) = UnixStream::pair().unwrap();
+        let mock_matlab = Arc::new(MockMatlab {
+            codes: Arc::new(Mutex::new(vec![])),
+            sigints: Arc::new(Mutex::new(0)),
+            sigterms: Arc::new(Mutex::new(0)),
+        });
+
+        let listener = MockListener {
+            stream: Mutex::new(Some(server)),
+        };
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tx.send(()).unwrap();
+
+        // Should exit via shutdown channel
+        let result =
+            run_with_listener(listener, mock_matlab, "/tmp/test.sock".to_string(), rx).await;
+        assert!(result.is_ok());
     }
 }
