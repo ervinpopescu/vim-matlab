@@ -13,10 +13,42 @@ use nix::pty::{Winsize, openpty};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::{ForkResult, Pid, execvp, fork, setsid, write};
 
+/// Interface for MATLAB process actions.
+pub trait MatlabActions {
+    fn send_code(&self, code: &str) -> io::Result<()>;
+    fn send_sigint(&self);
+    fn send_sigterm(&self);
+}
+
 /// Handle to a MATLAB process running inside a PTY.
 pub struct Matlab {
     master: OwnedFd,
     child_pid: Pid,
+}
+
+impl MatlabActions for Matlab {
+    /// Write `code` followed by a newline to the PTY master, which MATLAB
+    /// reads as interactive input.
+    fn send_code(&self, code: &str) -> io::Result<()> {
+        let mut buf = code.to_owned();
+        buf.push('\n');
+        let mut remaining = buf.as_bytes();
+        while !remaining.is_empty() {
+            let n = write(&self.master, remaining).map_err(nix_to_io)?;
+            remaining = &remaining[n..];
+        }
+        Ok(())
+    }
+
+    /// Send `SIGINT` to the child process (equivalent to Ctrl-C).
+    fn send_sigint(&self) {
+        let _ = signal::kill(self.child_pid, Signal::SIGINT);
+    }
+
+    /// Send `SIGTERM` to the child process for a graceful shutdown.
+    fn send_sigterm(&self) {
+        let _ = signal::kill(self.child_pid, Signal::SIGTERM);
+    }
 }
 
 impl Matlab {
@@ -119,29 +151,6 @@ impl Matlab {
                 })
             }
         }
-    }
-
-    /// Write `code` followed by a newline to the PTY master, which MATLAB
-    /// reads as interactive input.
-    pub fn send_code(&self, code: &str) -> io::Result<()> {
-        let mut buf = code.to_owned();
-        buf.push('\n');
-        let mut remaining = buf.as_bytes();
-        while !remaining.is_empty() {
-            let n = write(&self.master, remaining).map_err(nix_to_io)?;
-            remaining = &remaining[n..];
-        }
-        Ok(())
-    }
-
-    /// Send `SIGINT` to the child process (equivalent to Ctrl-C).
-    pub fn send_sigint(&self) {
-        let _ = signal::kill(self.child_pid, Signal::SIGINT);
-    }
-
-    /// Send `SIGTERM` to the child process for a graceful shutdown.
-    pub fn send_sigterm(&self) {
-        let _ = signal::kill(self.child_pid, Signal::SIGTERM);
     }
 
     /// Kill the entire process group/session associated with the child.

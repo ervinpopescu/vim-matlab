@@ -72,4 +72,17 @@ mod tests {
             Command::RunCode("Cancel".to_string()),
         );
     }
+
+    #[test]
+    fn parse_multiline_code() {
+        let code = "x = 1;\ny = 2;";
+        assert_eq!(parse_message(code), Command::RunCode(code.to_string()));
+    }
+
+    #[test]
+    fn parse_code_with_keywords() {
+        // "kill" inside a string shouldn't trigger the Kill command
+        let code = "disp('kill')";
+        assert_eq!(parse_message(code), Command::RunCode(code.to_string()));
+    }
 }

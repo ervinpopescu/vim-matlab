@@ -184,3 +184,39 @@ fn main() -> io::Result<()> {
 
     std::process::exit(0);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn test_raw_read_success() {
+        let (mut s1, s2) = UnixStream::pair().unwrap();
+        s1.write_all(b"hello").unwrap();
+        let mut buf = [0u8; 10];
+        let n = raw_read(s2.as_raw_fd(), &mut buf).unwrap();
+        assert_eq!(n, 5);
+        assert_eq!(&buf[..n], b"hello");
+    }
+
+    #[test]
+    fn test_raw_read_eof() {
+        let (_s1, s2) = UnixStream::pair().unwrap();
+        // Closing _s1 should send EOF
+        drop(_s1);
+        let mut buf = [0u8; 10];
+        let n = raw_read(s2.as_raw_fd(), &mut buf).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_raw_write_all_success() {
+        let (s1, mut s2) = UnixStream::pair().unwrap();
+        raw_write_all(s1.as_raw_fd(), b"world").unwrap();
+        let mut buf = [0u8; 5];
+        s2.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"world");
+    }
+}
