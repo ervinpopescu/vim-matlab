@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
+    branches: [ master, rewrite-rust ]
+  pull_request:
+    branches: [ master ]
 
 jobs:
-  build:
+  rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,17 +16,29 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Build
-        run: cargo build --verbose
+      - name: Format check
+        run: cargo fmt --check
 
-      - name: Test
-        run: cargo test --verbose
+      - name: Check
+        run: cargo check --verbose
 
       - name: Clippy
         run: cargo clippy -- -D warnings
 
-      - name: Format check
-        run: cargo fmt --check
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Generate coverage report
+        run: |
+          cargo install cargo-tarpaulin
+          cargo tarpaulin --out xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./cobertura.xml
+          fail_ci_if_error: true
 
   lua:
     runs-on: ubuntu-latest
@@ -36,3 +51,14 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: latest
           args: --check lua/
+
+      - name: Install Lua
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.1"
+
+      - name: Run Lua tests
+        run: |
+          # We need a minimal mock of nvim if we want to test more complex things,
+          # but for now we run our standalone test script.
+          lua tests/lua_tests.lua

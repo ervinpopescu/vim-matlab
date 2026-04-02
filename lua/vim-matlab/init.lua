@@ -12,7 +12,7 @@ local matlab_cmd = nil
 --- Single-quoted strings are skipped.
 ---@param line string
 ---@return string
-function M.strip_comment(line)
+function M._strip_comment(line)
   local i = 1
   local len = #line
   while i <= len do
@@ -36,11 +36,11 @@ end
 --- Strip comments and blank lines; join ellipsis continuations.
 ---@param lines string[]
 ---@return string[]
-function M.clean_lines(lines)
+function M._clean_lines(lines)
   local result = {}
   local is_continuation = false
   for _, raw in ipairs(lines) do
-    local line = vim.trim(M.strip_comment(raw))
+    local line = vim.trim(M._strip_comment(raw))
     if line ~= "" and line ~= "..." then
       local has_ellipsis = line:match("^(.*%S)%s*%.%.%.%s*$")
       if has_ellipsis then
@@ -92,7 +92,7 @@ local function is_cell_boundary(line)
 end
 
 --- Join statements smartly to avoid double semicolons or syntax errors.
-local function join_statements(lines)
+function M._join_statements(lines)
   local result = ""
   for i, line in ipairs(lines) do
     -- Trim whitespace
@@ -141,9 +141,9 @@ function M.run_cell()
     cell_lines[#cell_lines + 1] = lines[i]
   end
 
-  local cleaned = M.clean_lines(cell_lines)
+  local cleaned = M._clean_lines(cell_lines)
   if #cleaned > 0 then
-    send(join_statements(cleaned))
+    send(M._join_statements(cleaned))
   end
 end
 
@@ -151,15 +151,15 @@ function M.run_selection()
   local s = vim.fn.getpos("'<")
   local e = vim.fn.getpos("'>")
   local lines = vim.api.nvim_buf_get_lines(0, s[2] - 1, e[2], false)
-  local cleaned = M.clean_lines(lines)
+  local cleaned = M._clean_lines(lines)
   if #cleaned > 0 then
-    send(join_statements(cleaned))
+    send(M._join_statements(cleaned))
   end
 end
 
 function M.run_line()
   local line = vim.api.nvim_get_current_line()
-  local stripped = vim.trim(M.strip_comment(line))
+  local stripped = vim.trim(M._strip_comment(line))
   if stripped ~= "" then
     send(stripped)
   end
