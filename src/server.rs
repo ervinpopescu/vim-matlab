@@ -116,8 +116,17 @@ async fn handle_client(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    };
     use tokio::net::UnixStream;
+
+    fn unique_socket_path() -> String {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("/tmp/vim-matlab-test-{}-{}.sock", std::process::id(), n)
+    }
 
     struct MockMatlab {
         codes: Arc<Mutex<Vec<String>>>,
@@ -151,7 +160,7 @@ mod tests {
         client.write_all(b"x = 1\ny = 2\n").await.unwrap();
         drop(client);
 
-        let result = handle_client(server, &mock, "/tmp/test.sock")
+        let result = handle_client(server, &mock, &unique_socket_path())
             .await
             .unwrap();
         assert!(!result);
@@ -175,7 +184,7 @@ mod tests {
             .unwrap();
         drop(client);
 
-        handle_client(server, &mock, "/tmp/test.sock")
+        handle_client(server, &mock, &unique_socket_path())
             .await
             .unwrap();
         assert_eq!(mock.codes.lock().unwrap()[0], long_code);
@@ -194,7 +203,7 @@ mod tests {
         client.write_all(b"cancel\n").await.unwrap();
         drop(client);
 
-        handle_client(server, &mock, "/tmp/test.sock")
+        handle_client(server, &mock, &unique_socket_path())
             .await
             .unwrap();
         assert_eq!(*mock.sigints.lock().unwrap(), 1);
@@ -210,17 +219,17 @@ mod tests {
         };
 
         // Create a dummy socket file so Kill doesn't fail
-        let socket_path = "/tmp/vim-matlab-test-kill.sock";
-        let _ = std::fs::File::create(socket_path);
+        let socket_path = unique_socket_path();
+        let _ = std::fs::File::create(&socket_path);
 
         use tokio::io::AsyncWriteExt;
         client.write_all(b"kill\n").await.unwrap();
         drop(client);
 
-        let result = handle_client(server, &mock, socket_path).await.unwrap();
+        let result = handle_client(server, &mock, &socket_path).await.unwrap();
         assert!(result);
         assert_eq!(*mock.sigterms.lock().unwrap(), 1);
-        assert!(!std::path::Path::new(socket_path).exists());
+        assert!(!std::path::Path::new(&socket_path).exists());
     }
 
     #[tokio::test]
@@ -240,7 +249,7 @@ mod tests {
         drop(client);
 
         // Should not return error, just log it
-        let result = handle_client(server, &ErrorMatlab, "/tmp/test.sock").await;
+        let result = handle_client(server, &ErrorMatlab, &unique_socket_path()).await;
         assert!(result.is_ok());
     }
 
@@ -270,8 +279,8 @@ mod tests {
             sigterms: Arc::new(Mutex::new(0)),
         });
 
-        let socket_path = "/tmp/vim-matlab-test-run.sock";
-        let _ = std::fs::File::create(socket_path);
+        let socket_path = unique_socket_path();
+        let _ = std::fs::File::create(&socket_path);
 
         let listener = MockListener {
             stream: Mutex::new(Some(server)),
@@ -282,14 +291,14 @@ mod tests {
         drop(client);
 
         let (_tx, rx) = tokio::sync::oneshot::channel();
-        let _ = run_with_listener(listener, mock_matlab.clone(), socket_path.to_string(), rx).await;
+        let _ = run_with_listener(listener, mock_matlab.clone(), socket_path.clone(), rx).await;
         assert_eq!(*mock_matlab.sigterms.lock().unwrap(), 1);
-        assert!(!std::path::Path::new(socket_path).exists());
+        assert!(!std::path::Path::new(&socket_path).exists());
     }
 
     #[tokio::test]
     async fn test_run_direct_socket() {
-        let socket_path = format!("/tmp/vim-matlab-test-direct-{}.sock", std::process::id());
+        let socket_path = unique_socket_path();
         let _ = std::fs::remove_file(&socket_path);
 
         let mock_matlab = Arc::new(MockMatlab {
@@ -334,30 +343,33 @@ mod tests {
 
         let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
         // MockListener errors on the second accept, which propagates through result?
-        let result =
-            run_with_listener(listener, mock_matlab, "/tmp/test.sock".to_string(), rx).await;
+        let result = run_with_listener(listener, mock_matlab, unique_socket_path(), rx).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_run_with_listener_shutdown() {
-        let (_client, server) = UnixStream::pair().unwrap();
+        // Use a listener whose accept() never resolves so the shutdown branch
+        // is guaranteed to win the select, regardless of scheduling order.
+        struct PendingListener;
+        #[async_trait::async_trait]
+        impl Listener for PendingListener {
+            async fn accept(&self) -> io::Result<(UnixStream, ())> {
+                std::future::pending().await
+            }
+        }
+
         let mock_matlab = Arc::new(MockMatlab {
             codes: Arc::new(Mutex::new(vec![])),
             sigints: Arc::new(Mutex::new(0)),
             sigterms: Arc::new(Mutex::new(0)),
         });
 
-        let listener = MockListener {
-            stream: Mutex::new(Some(server)),
-        };
-
         let (tx, rx) = tokio::sync::oneshot::channel();
         tx.send(()).unwrap();
 
-        // Should exit via shutdown channel
         let result =
-            run_with_listener(listener, mock_matlab, "/tmp/test.sock".to_string(), rx).await;
+            run_with_listener(PendingListener, mock_matlab, unique_socket_path(), rx).await;
         assert!(result.is_ok());
     }
 }
