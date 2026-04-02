@@ -6,6 +6,6 @@ rust-version = "1.85.1"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-nix = { version = "0.29", features = ["fs", "process", "signal", "term", "user"] }
+nix = { version = "0.31", features = ["fs", "process", "signal", "term", "user"] }
 clap = { version = "4", features = ["derive"] }
 libc = "0.2.183"
