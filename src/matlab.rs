@@ -145,6 +145,14 @@ impl Matlab {
                 // it goes out of scope — we have transferred ownership.
                 std::mem::forget(pty.master);
 
+                // Set non-blocking mode for the master so it works correctly with AsyncFd.
+                let flags =
+                    nix::fcntl::fcntl(&master, nix::fcntl::FcntlArg::F_GETFL).map_err(nix_to_io)?;
+                let mut flags = nix::fcntl::OFlag::from_bits_truncate(flags);
+                flags.insert(nix::fcntl::OFlag::O_NONBLOCK);
+                nix::fcntl::fcntl(&master, nix::fcntl::FcntlArg::F_SETFL(flags))
+                    .map_err(nix_to_io)?;
+
                 Ok(Self {
                     master,
                     child_pid: child,
@@ -171,6 +179,100 @@ impl Matlab {
     /// Return the PID of the child process.
     pub fn child_pid(&self) -> Pid {
         self.child_pid
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    #[test]
+    fn test_nix_to_io() {
+        let err = nix::Error::from_raw(libc::EIO);
+        let io_err = nix_to_io(err);
+        assert_eq!(io_err.raw_os_error(), Some(libc::EIO));
+    }
+
+    #[test]
+    fn test_matlab_spawn_and_actions() {
+        // Use 'cat' as a dummy MATLAB. It will echo everything back.
+        let matlab = Matlab::spawn("cat").expect("Failed to spawn cat");
+        assert!(matlab.child_pid().as_raw() > 0);
+
+        // Test send_code
+        matlab.send_code("hello world").unwrap();
+
+        // Give it a moment to echo
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Read from master to verify the echo. Master is non-blocking now.
+        let mut master =
+            unsafe { std::fs::File::from_raw_fd(libc::dup(matlab.master_fd().as_raw_fd())) };
+        let mut buf = [0u8; 1024];
+        let mut total_read = 0;
+
+        // Try reading in a loop to handle EAGAIN
+        for _ in 0..20 {
+            match master.read(&mut buf) {
+                Ok(n) if n > 0 => {
+                    total_read += n;
+                    break;
+                }
+                Ok(_) => break,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    continue;
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(total_read > 0);
+
+        // Test signals
+        matlab.send_sigint();
+        matlab.send_sigterm();
+        matlab.kill_session();
+    }
+
+    #[tokio::test]
+    async fn test_matlab_async_read() {
+        let matlab = Matlab::spawn("echo 'test output'").expect("Failed to spawn echo");
+        let master_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(matlab.master_fd().as_raw_fd())) };
+        let async_fd = tokio::io::unix::AsyncFd::new(master_fd).unwrap();
+
+        let mut buf = [0u8; 1024];
+        let mut total_read = 0;
+
+        // Try reading for a bit
+        for _ in 0..20 {
+            let mut guard = match tokio::time::timeout(
+                std::time::Duration::from_millis(200),
+                async_fd.readable(),
+            )
+            .await
+            {
+                Ok(Ok(g)) => g,
+                _ => break,
+            };
+
+            let n = unsafe {
+                libc::read(
+                    guard.get_inner().as_raw_fd(),
+                    buf.as_mut_ptr().add(total_read).cast(),
+                    buf.len() - total_read,
+                )
+            };
+
+            if n <= 0 {
+                break;
+            }
+            total_read += n as usize;
+            guard.clear_ready();
+        }
+
+        let output = String::from_utf8_lossy(&buf[..total_read]);
+        assert!(output.contains("test output") || output.contains("echo"));
     }
 }
 
